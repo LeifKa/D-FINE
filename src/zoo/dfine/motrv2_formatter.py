@@ -1,6 +1,6 @@
 """
 Copyright (c) 2024 The D-FINE Authors. All Rights Reserved.
-MOTRv2 Integration Module for D-FINE
+MOTRv2 Integration Module for D-FINE - Fixed version with proper tensor handling
 """
 
 import json
@@ -14,10 +14,9 @@ class MOTRv2Formatter:
     """
     Formatter to convert D-FINE detection outputs to MOTRv2 compatible JSON format.
     
-    MOTRv2 expects detections in a specific JSON structure where:
-    - Bounding boxes are in [x, y, width, height] format
-    - Coordinates are in pixel space (not normalized)
-    - Each sequence and frame has its own nested structure
+    This formatter properly handles PyTorch tensors by detaching them from the
+    computation graph before conversion to NumPy arrays. This is essential for
+    inference mode where we don't need gradient tracking.
     """
     
     def __init__(self, 
@@ -39,9 +38,8 @@ class MOTRv2Formatter:
         """
         Convert from D-FINE's corner format [x1, y1, x2, y2] to MOTRv2's [x, y, width, height].
         
-        This is crucial because:
-        - D-FINE outputs: bottom-right corner coordinates
-        - MOTRv2 expects: top-left corner + dimensions
+        This function properly handles both torch tensors and numpy arrays,
+        ensuring gradient safety by detaching tensors before conversion.
         
         Args:
             bbox: Tensor of shape (4,) with [x1, y1, x2, y2]
@@ -49,8 +47,10 @@ class MOTRv2Formatter:
         Returns:
             List with [x, y, width, height] format
         """
+        # Handle both tensor and numpy array inputs safely
         if isinstance(bbox, torch.Tensor):
-            bbox = bbox.cpu().numpy()
+            # Detach from computation graph first, then move to CPU and convert
+            bbox = bbox.detach().cpu().numpy()
             
         x1, y1, x2, y2 = bbox
         
@@ -73,6 +73,9 @@ class MOTRv2Formatter:
         """
         Process D-FINE outputs for a single frame and format for MOTRv2.
         
+        This method safely handles tensors that may still be attached to the
+        computation graph by properly detaching them before conversion.
+        
         Args:
             labels: Tensor of shape (N,) with class indices
             boxes: Tensor of shape (N, 4) with bounding boxes in xyxy format
@@ -83,13 +86,15 @@ class MOTRv2Formatter:
         Returns:
             Dictionary with frame detections in MOTRv2 format
         """
-        # Move tensors to CPU if needed
+        # Safely convert tensors to numpy arrays
+        # The .detach() call is crucial - it creates a new tensor that doesn't
+        # require gradients and isn't part of the computation graph
         if isinstance(labels, torch.Tensor):
-            labels = labels.cpu().numpy()
+            labels = labels.detach().cpu().numpy()
         if isinstance(boxes, torch.Tensor):
-            boxes = boxes.cpu().numpy()
+            boxes = boxes.detach().cpu().numpy()
         if isinstance(scores, torch.Tensor):
-            scores = scores.cpu().numpy()
+            scores = scores.detach().cpu().numpy()
             
         # Filter by confidence threshold
         valid_mask = scores >= self.score_threshold
@@ -177,6 +182,9 @@ class MOTRv2VideoProcessor:
                                start_frame: int = 1) -> Dict[str, Any]:
         """
         Process a batch of detections from multiple frames.
+        
+        This method ensures all tensors are properly detached from the
+        computation graph before processing.
         
         Args:
             all_labels: List of label tensors, one per frame
