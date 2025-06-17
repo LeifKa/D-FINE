@@ -4,4 +4,7 @@ weight/
 wandb/
 *.pth
 *.onnx
+*.jpg
+*.mp4
+*.json
 
