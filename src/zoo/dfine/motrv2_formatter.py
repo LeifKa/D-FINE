@@ -1,5 +1,5 @@
 """
-Copyright (c) 2024 The D-FINE Authors. All Rights Reserved.
+Copyright (c) 2024 The BeachKI Authors. All Rights Reserved.
 MOTRv2 Integration Module for D-FINE - Fixed version with proper tensor handling
 """
 
