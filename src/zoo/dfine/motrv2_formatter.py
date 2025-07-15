@@ -1,6 +1,6 @@
 """
-Copyright (c) 2024 The BeachKI Authors. All Rights Reserved.
-MOTRv2 Integration Module for D-FINE - Fixed version with proper tensor handling
+Enhanced MOTRv2 Formatter with Object ID Translation and Court Area Filtering
+This module provides comprehensive filtering and translation for beach volleyball analysis
 """
 
 import json
