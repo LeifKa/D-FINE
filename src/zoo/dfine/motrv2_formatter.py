@@ -136,64 +136,83 @@ class CourtAreaSelector:
             return None
 
 
-class EnhancedMOTRv2Formatter:
+class MOTRv2Formatter:
     """
     Enhanced formatter with Object ID translation and court area filtering.
-    
-    This formatter addresses two key challenges:
-    1. Translating between Objects365 and COCO class IDs
-    2. Filtering detections to only include those within the court area
+    Specifically optimized for beach volleyball analysis.
     """
     
-    # Object ID mapping from Objects365 to COCO
+    # Beach volleyball specific mappings - ONLY players and ball
     OBJECTS365_TO_COCO = {
-        0: 0,      # Person -> person
+        0: 0,      # Person -> person (players)
         240: 37,   # Volleyball/Ball -> sports ball
-        # Add more mappings as needed for your use case
+        # Only these two classes will be kept for beach volleyball analysis
+    }
+    
+    # Human-readable class names for logging
+    CLASS_NAMES = {
+        0: "player",
+        37: "ball"
     }
     
     def __init__(self, 
                  score_threshold: float = 0.3,
                  court_bounds: Optional[Dict[str, float]] = None,
-                 enable_translation: bool = True):
+                 enable_translation: bool = True,
+                 allowed_classes: Optional[List[int]] = None,
+                 category_mapping: Optional[Dict[int, int]] = None):
         """
-        Initialize the enhanced formatter.
+        Initialize the beach volleyball formatter.
         
         Args:
             score_threshold: Minimum confidence score to include a detection
             court_bounds: Dictionary with 'left', 'right', 'top', 'bottom' as ratios (0-1)
             enable_translation: Whether to translate Objects365 IDs to COCO IDs
+            allowed_classes: List of COCO class IDs to keep (None = keep all mapped classes)
+            category_mapping: Legacy parameter for compatibility (ignored - uses OBJECTS365_TO_COCO)
         """
         self.score_threshold = score_threshold
         self.court_bounds = court_bounds
         self.enable_translation = enable_translation
+        
+        # For beach volleyball, default to only players and ball
+        self.allowed_classes = allowed_classes or [0, 37]  # person, sports ball
+        
         self.detection_database = {}
         
-        # Statistics for debugging
+        # Enhanced statistics for beach volleyball
         self.stats = {
             'total_detections': 0,
             'filtered_by_score': 0,
             'filtered_by_court': 0,
             'filtered_by_translation': 0,
-            'kept_detections': 0
+            'filtered_by_class': 0,
+            'kept_detections': 0,
+            'class_counts': {class_id: 0 for class_id in self.allowed_classes}
         }
+        
+        print(f"Beach volleyball filter initialized:")
+        print(f"  Allowed classes: {[self.CLASS_NAMES.get(cid, f'class_{cid}') for cid in self.allowed_classes]}")
+        print(f"  Score threshold: {score_threshold}")
+        print(f"  Court area filtering: {'enabled' if court_bounds else 'disabled'}")
     
     def translate_class_id(self, objects365_id: int) -> Optional[int]:
         """
         Translate Objects365 class ID to COCO class ID.
-        
-        Returns None if no mapping exists (which filters out the detection).
+        Returns None if no mapping exists or class is not allowed for beach volleyball.
         """
         if not self.enable_translation:
-            return objects365_id
+            return objects365_id if objects365_id in self.allowed_classes else None
             
         coco_id = self.OBJECTS365_TO_COCO.get(objects365_id)
         
         if coco_id is None:
-            # Log unmapped classes for debugging
-            if objects365_id not in self.OBJECTS365_TO_COCO:
-                print(f"Warning: No COCO mapping for Objects365 class {objects365_id}")
-        
+            return None  # No mapping exists - not a beach volleyball relevant object
+            
+        # Check if the mapped class is in our allowed list
+        if coco_id not in self.allowed_classes:
+            return None  # Class not allowed for beach volleyball
+            
         return coco_id
     
     def is_in_court_area(self, bbox: List[float], image_width: int, image_height: int) -> bool:
@@ -244,15 +263,15 @@ class EnhancedMOTRv2Formatter:
                            scores: torch.Tensor,
                            sequence_name: str,
                            frame_number: int,
-                           image_width: int,
-                           image_height: int) -> Dict[str, Any]:
+                           image_width: int = 640,  # Default from D-FINE
+                           image_height: int = 640) -> Dict[str, Any]:
         """
-        Process detections with translation and court filtering.
+        Process detections with beach volleyball specific filtering.
         
         This method applies a multi-stage filtering pipeline:
         1. Score threshold filtering
-        2. Object ID translation (Objects365 -> COCO)
-        3. Court area filtering
+        2. Object ID translation (Objects365 -> COCO) - ONLY players and ball pass
+        3. Court area filtering (if court bounds are defined)
         """
         # Convert tensors to numpy
         if isinstance(labels, torch.Tensor):
@@ -267,8 +286,10 @@ class EnhancedMOTRv2Formatter:
             'total': len(labels),
             'score_filtered': 0,
             'translation_filtered': 0,
+            'class_filtered': 0,
             'court_filtered': 0,
-            'kept': 0
+            'kept': 0,
+            'class_counts': {class_id: 0 for class_id in self.allowed_classes}
         }
         
         for i in range(len(labels)):
@@ -280,11 +301,12 @@ class EnhancedMOTRv2Formatter:
                 frame_stats['score_filtered'] += 1
                 continue
             
-            # Stage 2: Class ID translation
+            # Stage 2: Class ID translation and filtering - CRITICAL for beach volleyball
             objects365_id = int(labels[i])
             coco_id = self.translate_class_id(objects365_id)
             
             if coco_id is None:
+                # Object is not a player or ball - filter out
                 self.stats['filtered_by_translation'] += 1
                 frame_stats['translation_filtered'] += 1
                 continue
@@ -298,22 +320,30 @@ class EnhancedMOTRv2Formatter:
                 frame_stats['court_filtered'] += 1
                 continue
             
-            # Detection passed all filters
+            # Detection passed all filters - it's a player or ball in the court area
             detection = {
                 "bbox": bbox,
                 "score": float(scores[i]),
-                "category_id": coco_id  # Use translated ID
+                "category_id": coco_id
             }
             frame_detections.append(detection)
             self.stats['kept_detections'] += 1
+            self.stats['class_counts'][coco_id] += 1
             frame_stats['kept'] += 1
+            frame_stats['class_counts'][coco_id] += 1
         
-        # Log frame statistics
-        if frame_number % 10 == 0:  # Log every 10th frame to avoid spam
-            print(f"Frame {frame_number}: {frame_stats['kept']}/{frame_stats['total']} kept "
-                  f"(score: -{frame_stats['score_filtered']}, "
-                  f"translation: -{frame_stats['translation_filtered']}, "
-                  f"court: -{frame_stats['court_filtered']})")
+        # Enhanced logging with class breakdown
+        if frame_number % 30 == 0:  # Log every 30th frame
+            class_summary = ", ".join([
+                f"{self.CLASS_NAMES.get(cid, f'class_{cid}')}: {frame_stats['class_counts'][cid]}"
+                for cid in self.allowed_classes if frame_stats['class_counts'][cid] > 0
+            ])
+            if class_summary:
+                print(f"Frame {frame_number}: {frame_stats['kept']}/{frame_stats['total']} kept "
+                      f"({class_summary})")
+            else:
+                print(f"Frame {frame_number}: {frame_stats['kept']}/{frame_stats['total']} kept "
+                      f"(no players or ball detected)")
         
         # Store in database
         if sequence_name not in self.detection_database:
@@ -324,22 +354,31 @@ class EnhancedMOTRv2Formatter:
         return {sequence_name: {str(frame_number): frame_detections}}
     
     def save_database(self, output_path: str, filename: str = "det_db_motrv2.json") -> str:
-        """Save the detection database with filtering statistics."""
+        """Save the detection database with enhanced beach volleyball statistics."""
         os.makedirs(output_path, exist_ok=True)
         full_path = os.path.join(output_path, filename)
         
         with open(full_path, 'w') as f:
             json.dump(self.detection_database, f, indent=2)
         
-        # Print comprehensive statistics
-        print("\n=== Detection Processing Summary ===")
+        # Print comprehensive beach volleyball statistics
+        print("\n=== Beach Volleyball Detection Summary ===")
         print(f"Total detections processed: {self.stats['total_detections']}")
         print(f"Filtered by score threshold: {self.stats['filtered_by_score']}")
-        print(f"Filtered by translation: {self.stats['filtered_by_translation']}")
+        print(f"Filtered by class restrictions: {self.stats['filtered_by_translation']}")
         print(f"Filtered by court area: {self.stats['filtered_by_court']}")
         print(f"Final detections kept: {self.stats['kept_detections']}")
         print(f"Retention rate: {self.stats['kept_detections']/max(1, self.stats['total_detections']):.1%}")
+        
+        print("\n=== Beach Volleyball Class Breakdown ===")
+        for class_id in self.allowed_classes:
+            class_name = self.CLASS_NAMES.get(class_id, f"class_{class_id}")
+            count = self.stats['class_counts'][class_id]
+            percentage = count / max(1, self.stats['kept_detections']) * 100
+            print(f"{class_name}: {count} detections ({percentage:.1f}%)")
+        
         print(f"\nMOTRv2 detection database saved to: {full_path}")
+        print("Ready for beach volleyball analysis with MOTRv2!")
         
         return full_path
     
@@ -351,5 +390,25 @@ class EnhancedMOTRv2Formatter:
             'filtered_by_score': 0,
             'filtered_by_court': 0,
             'filtered_by_translation': 0,
-            'kept_detections': 0
+            'kept_detections': 0,
+            'class_counts': {class_id: 0 for class_id in self.allowed_classes}
         }
+
+
+class MOTRv2VideoProcessor:
+    """
+    Compatibility class for any existing video processing code.
+    Delegates to MOTRv2Formatter for actual processing.
+    """
+    
+    def __init__(self, formatter: MOTRv2Formatter):
+        self.formatter = formatter
+    
+    def process_video(self, video_path: str, sequence_name: str = None):
+        """Process entire video with the formatter."""
+        if sequence_name is None:
+            sequence_name = os.path.splitext(os.path.basename(video_path))[0]
+        
+        print(f"Processing video: {video_path}")
+        print("Note: Use torch_inf.py for actual video processing with D-FINE model")
+        return sequence_name
