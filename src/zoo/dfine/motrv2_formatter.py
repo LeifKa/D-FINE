@@ -145,6 +145,7 @@ class MOTRv2Formatter:
     # Beach volleyball specific mappings - ONLY players and ball
     OBJECTS365_TO_COCO = {
         0: 0,      # Person -> person (players)
+        1: 1,
         240: 37,   # Volleyball/Ball -> sports ball
         # Only these two classes will be kept for beach volleyball analysis
     }
