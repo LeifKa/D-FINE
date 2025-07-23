@@ -1,10 +1,11 @@
 """
 Copyright (c) 2024 The D-FINE Authors. All Rights Reserved.
-Modified to support MOTRv2 output format
+Modified to support simplified MOTRv2 output format
 """
 
 import os
 import sys
+import json
 
 import cv2  # Added for video processing
 import numpy as np
@@ -82,7 +83,7 @@ def process_image(model, device, file_path, motrv2_formatter=None, sequence_name
         
         # Process single frame (frame number 1 for single images)
         motrv2_formatter.process_single_frame(
-            labels[0], boxes[0], scores[0], sequence_name, 1
+            labels[0], boxes[0], scores[0], sequence_name, 1, w, h
         )
         
         # Save MOTRv2 JSON
@@ -151,7 +152,7 @@ def process_video(model, device, file_path, motrv2_formatter=None, sequence_name
         if motrv2_formatter is not None:
             # Frame numbers are 1-based for MOTRv2
             motrv2_formatter.process_single_frame(
-                labels[0], boxes[0], scores[0], sequence_name, frame_count + 1
+                labels[0], boxes[0], scores[0], sequence_name, frame_count + 1, w, h
             )
 
         # Draw detections on the frame for visualization
@@ -181,7 +182,7 @@ def process_video(model, device, file_path, motrv2_formatter=None, sequence_name
 
 
 def main(args):
-    """Main function with MOTRv2 support"""
+    """Main function with simplified MOTRv2 support"""
     cfg = YAMLConfig(args.config, resume=args.resume)
 
     if "HGNetv2" in cfg.yaml_cfg:
@@ -218,24 +219,31 @@ def main(args):
     if args.motrv2 and MOTRV2_AVAILABLE:
         print("MOTRv2 output format enabled")
         
-        # Configure MOTRv2 formatter
-        category_mapping = None
-        if args.motrv2_category_mapping:
-            # Parse category mapping from command line
-            # Format: "0:1,2:1,3:2" maps D-FINE classes 0,2 to MOTRv2 class 1, and 3 to 2
+        # Parse allowed classes from command line or config file
+        allowed_classes = None
+        if args.motrv2_config:
+            # Load from config file
             try:
-                mapping_pairs = args.motrv2_category_mapping.split(',')
-                category_mapping = {}
-                for pair in mapping_pairs:
-                    dfine_id, motrv2_id = map(int, pair.split(':'))
-                    category_mapping[dfine_id] = motrv2_id
-                print(f"Using category mapping: {category_mapping}")
+                with open(args.motrv2_config, 'r') as f:
+                    config = json.load(f)
+                    allowed_classes = config.get('allowed_classes', [0, 1])
+                    print(f"Loaded allowed classes from config: {allowed_classes}")
+            except Exception as e:
+                print(f"Error loading config file: {e}. Using command line arguments.")
+                allowed_classes = None
+        
+        if allowed_classes is None:
+            # Parse from command line
+            try:
+                allowed_classes = [int(x.strip()) for x in args.allowed_classes.split(',')]
+                print(f"Using allowed classes from command line: {allowed_classes}")
             except:
-                print("Warning: Invalid category mapping format. Using identity mapping.")
+                print("Error parsing allowed classes. Using default [0, 1]")
+                allowed_classes = [0, 1]
         
         motrv2_formatter = MOTRv2Formatter(
             score_threshold=args.motrv2_score_threshold,
-            category_mapping=category_mapping
+            allowed_classes=allowed_classes
         )
     elif args.motrv2 and not MOTRV2_AVAILABLE:
         print("Error: MOTRv2 formatter not available. Please ensure motrv2_formatter.py is in the correct location.")
@@ -272,8 +280,10 @@ if __name__ == "__main__":
                         help="Score threshold for MOTRv2 detections (default: 0.3)")
     parser.add_argument("--sequence-name", type=str, default=None,
                         help="Sequence name for MOTRv2 output (default: input filename)")
-    parser.add_argument("--motrv2-category-mapping", type=str, default=None,
-                        help="Category mapping for MOTRv2 format, e.g., '0:1,2:1,3:2'")
+    parser.add_argument("--allowed-classes", type=str, default="0,1",
+                        help="Comma-separated list of class IDs to include (default: '0,1')")
+    parser.add_argument("--motrv2-config", type=str, default=None,
+                        help="Path to MOTRv2 config JSON file")
     
     args = parser.parse_args()
     main(args)

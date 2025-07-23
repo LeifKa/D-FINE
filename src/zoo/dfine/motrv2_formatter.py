@@ -1,5 +1,5 @@
 """
-Enhanced MOTRv2 Formatter - Fixed for correct MOTRv2 JSON format
+Simplified MOTRv2 Formatter - Direct class ID filtering without complex mapping
 Compatible with MOTRv2's expected input format
 """
 
@@ -120,7 +120,7 @@ class CourtAreaSelector:
 
 class MOTRv2Formatter:
     """
-    MOTRv2 Formatter - Creates the exact JSON format expected by MOTRv2
+    Simplified MOTRv2 Formatter - Direct class filtering without complex mapping
     
     MOTRv2 expects:
     {
@@ -128,45 +128,31 @@ class MOTRv2Formatter:
         "sequence/img1/000002.txt": ["x,y,w,h,score\n", ...],
         ...
     }
+    
+    This version directly filters D-FINE class IDs without any mapping.
     """
-    
-    # Beach volleyball specific mappings
-    OBJECTS365_TO_COCO = {
-        0: 0,      # Person -> person (players)
-        1: 1,
-        240: 37,   # Volleyball/Ball -> sports ball
-    }
-    
-    CLASS_NAMES = {
-        0: "player",
-        37: "ball"
-    }
     
     def __init__(self, 
                  score_threshold: float = 0.3,
                  court_bounds: Optional[Dict[str, float]] = None,
-                 enable_translation: bool = True,
                  allowed_classes: Optional[List[int]] = None,
-                 sequence_base_path: str = "img1",  # MOTRv2 expects "img1" folder
-                 category_mapping: Optional[Dict[int, int]] = None):
+                 sequence_base_path: str = "img1"):
         """
-        Initialize the MOTRv2 formatter.
+        Initialize the simplified MOTRv2 formatter.
         
         Args:
             score_threshold: Minimum confidence score
             court_bounds: Court area boundaries  
-            enable_translation: Whether to translate class IDs
-            allowed_classes: List of allowed COCO class IDs
+            allowed_classes: List of D-FINE class IDs to include (raw class IDs from D-FINE output)
             sequence_base_path: Base path for sequence (usually "img1")
-            category_mapping: Legacy parameter (ignored)
         """
         self.score_threshold = score_threshold
         self.court_bounds = court_bounds
-        self.enable_translation = enable_translation
         self.sequence_base_path = sequence_base_path
         
-        # For beach volleyball, default to only players and ball
-        self.allowed_classes = allowed_classes or [0, 37]  # person, sports ball
+        # Default to common person/player class IDs if not specified
+        # You can adjust these based on what D-FINE actually outputs
+        self.allowed_classes = allowed_classes or [0, 1]  # Start with these, adjust as needed
         
         # MOTRv2 format: {"path/to/frame.txt": ["x,y,w,h,score\n", ...]}
         self.detection_database = {}
@@ -175,32 +161,16 @@ class MOTRv2Formatter:
             'total_detections': 0,
             'filtered_by_score': 0,
             'filtered_by_court': 0,
-            'filtered_by_translation': 0,
             'filtered_by_class': 0,
             'kept_detections': 0,
-            'class_counts': {class_id: 0 for class_id in self.allowed_classes}
+            'class_counts': {}
         }
         
         print(f"MOTRv2 formatter initialized:")
-        print(f"  Allowed classes: {[self.CLASS_NAMES.get(cid, f'class_{cid}') for cid in self.allowed_classes]}")
+        print(f"  Allowed class IDs: {self.allowed_classes}")
         print(f"  Score threshold: {score_threshold}")
         print(f"  Court area filtering: {'enabled' if court_bounds else 'disabled'}")
         print(f"  Sequence path format: {sequence_base_path}/XXXXXX.txt")
-    
-    def translate_class_id(self, objects365_id: int) -> Optional[int]:
-        """Translate Objects365 class ID to COCO class ID."""
-        if not self.enable_translation:
-            return objects365_id if objects365_id in self.allowed_classes else None
-            
-        coco_id = self.OBJECTS365_TO_COCO.get(objects365_id)
-        
-        if coco_id is None:
-            return None
-            
-        if coco_id not in self.allowed_classes:
-            return None
-            
-        return coco_id
     
     def is_in_court_area(self, bbox: List[float], image_width: int, image_height: int) -> bool:
         """Check if detection center is within court boundaries."""
@@ -274,11 +244,22 @@ class MOTRv2Formatter:
         frame_stats = {
             'total': len(labels),
             'score_filtered': 0,
-            'translation_filtered': 0,
+            'class_filtered': 0,
             'court_filtered': 0,
             'kept': 0,
-            'class_counts': {class_id: 0 for class_id in self.allowed_classes}
+            'class_counts': {}
         }
+        
+        # DEBUG: Print class information for first few frames
+        if frame_number <= 3:
+            unique_classes = set(labels)
+            print(f"\n=== FRAME {frame_number} DEBUG ===")
+            print(f"Unique class IDs detected by D-FINE: {sorted(unique_classes)}")
+            for class_id in sorted(unique_classes):
+                count = sum(1 for label in labels if label == class_id)
+                print(f"  Class {int(class_id)}: {count} detections")
+            print(f"Score range: {scores.min():.3f} - {scores.max():.3f}")
+            print(f"Allowed classes: {self.allowed_classes}")
         
         for i in range(len(labels)):
             self.stats['total_detections'] += 1
@@ -289,13 +270,12 @@ class MOTRv2Formatter:
                 frame_stats['score_filtered'] += 1
                 continue
             
-            # Stage 2: Class ID translation and filtering
-            objects365_id = int(labels[i])
-            coco_id = self.translate_class_id(objects365_id)
+            # Stage 2: Direct class ID filtering (no mapping)
+            class_id = int(labels[i])
             
-            if coco_id is None:
-                self.stats['filtered_by_translation'] += 1
-                frame_stats['translation_filtered'] += 1
+            if class_id not in self.allowed_classes:
+                self.stats['filtered_by_class'] += 1
+                frame_stats['class_filtered'] += 1
                 continue
             
             # Stage 3: Convert bbox format (D-FINE [x1,y1,x2,y2] -> MOTRv2 [x,y,w,h])
@@ -313,20 +293,27 @@ class MOTRv2Formatter:
             frame_detections.append(detection_string)
             
             self.stats['kept_detections'] += 1
-            self.stats['class_counts'][coco_id] += 1
             frame_stats['kept'] += 1
-            frame_stats['class_counts'][coco_id] += 1
+            
+            # Update class counts
+            if class_id not in self.stats['class_counts']:
+                self.stats['class_counts'][class_id] = 0
+            if class_id not in frame_stats['class_counts']:
+                frame_stats['class_counts'][class_id] = 0
+            
+            self.stats['class_counts'][class_id] += 1
+            frame_stats['class_counts'][class_id] += 1
         
         # Enhanced logging
-        if frame_number % 30 == 0:
+        if frame_number % 30 == 0 or frame_number <= 5:
             class_summary = ", ".join([
-                f"{self.CLASS_NAMES.get(cid, f'class_{cid}')}: {frame_stats['class_counts'][cid]}"
-                for cid in self.allowed_classes if frame_stats['class_counts'][cid] > 0
+                f"class_{cid}: {frame_stats['class_counts'][cid]}"
+                for cid in frame_stats['class_counts'] if frame_stats['class_counts'][cid] > 0
             ])
             if class_summary:
                 print(f"Frame {frame_number}: {frame_stats['kept']}/{frame_stats['total']} kept ({class_summary})")
             else:
-                print(f"Frame {frame_number}: {frame_stats['kept']}/{frame_stats['total']} kept (no players or ball detected)")
+                print(f"Frame {frame_number}: {frame_stats['kept']}/{frame_stats['total']} kept (no detections match criteria)")
         
         # Store in MOTRv2 format
         frame_path = self.get_frame_path(sequence_name, frame_number)
@@ -346,17 +333,16 @@ class MOTRv2Formatter:
         print("\n=== MOTRv2 Detection Database Summary ===")
         print(f"Total detections processed: {self.stats['total_detections']}")
         print(f"Filtered by score threshold: {self.stats['filtered_by_score']}")
-        print(f"Filtered by class restrictions: {self.stats['filtered_by_translation']}")
+        print(f"Filtered by class restrictions: {self.stats['filtered_by_class']}")
         print(f"Filtered by court area: {self.stats['filtered_by_court']}")
         print(f"Final detections kept: {self.stats['kept_detections']}")
         print(f"Retention rate: {self.stats['kept_detections']/max(1, self.stats['total_detections']):.1%}")
         
-        print("\n=== Beach Volleyball Class Breakdown ===")
-        for class_id in self.allowed_classes:
-            class_name = self.CLASS_NAMES.get(class_id, f"class_{class_id}")
+        print("\n=== Class Breakdown ===")
+        for class_id in sorted(self.stats['class_counts'].keys()):
             count = self.stats['class_counts'][class_id]
             percentage = count / max(1, self.stats['kept_detections']) * 100
-            print(f"{class_name}: {count} detections ({percentage:.1f}%)")
+            print(f"Class {class_id}: {count} detections ({percentage:.1f}%)")
         
         print(f"\n=== MOTRv2 Format Validation ===")
         print(f"Total frames processed: {len(self.detection_database)}")
@@ -383,9 +369,9 @@ class MOTRv2Formatter:
             'total_detections': 0,
             'filtered_by_score': 0,
             'filtered_by_court': 0,
-            'filtered_by_translation': 0,
+            'filtered_by_class': 0,
             'kept_detections': 0,
-            'class_counts': {class_id: 0 for class_id in self.allowed_classes}
+            'class_counts': {}
         }
 
 
