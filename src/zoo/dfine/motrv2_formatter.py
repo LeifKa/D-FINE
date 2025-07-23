@@ -213,10 +213,10 @@ class MOTRv2Formatter:
         """
         Generate the frame path expected by MOTRv2.
         
-        For sequence "Testsequenz1" and frame 1, returns: "Testsequenz1/img1/000001.txt"
+        For sequence "Testsequenz1" and frame 1, returns: "Testsequenz1/img1/000001"
         """
         frame_str = f"{frame_number:06d}"  # Zero-padded to 6 digits
-        return f"{sequence_name}/{self.sequence_base_path}/{frame_str}.txt"
+        return f"{sequence_name}/{self.sequence_base_path}/{frame_str}"
     
     def process_single_frame(self, 
                            labels: torch.Tensor,
