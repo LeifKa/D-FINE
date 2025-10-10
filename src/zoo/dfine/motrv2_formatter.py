@@ -132,8 +132,8 @@ class MOTRv2Formatter:
     This version directly filters D-FINE class IDs without any mapping.
     """
     
-    def __init__(self, 
-                 score_threshold: float = 0.3,
+    def __init__(self,
+                 score_threshold: float = 0.7,
                  court_bounds: Optional[Dict[str, float]] = None,
                  allowed_classes: Optional[List[int]] = None,
                  sequence_base_path: str = "img1"):
