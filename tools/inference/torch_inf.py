@@ -6,6 +6,7 @@ Modified to support simplified MOTRv2 output format
 import os
 import sys
 import json
+import glob
 
 import cv2  # Added for video processing
 import numpy as np
@@ -47,16 +48,17 @@ def draw(images, labels, boxes, scores, thrh=0.4):
         im.save("torch_results.jpg")
 
 
-def process_image(model, device, file_path, motrv2_formatter=None, sequence_name=None):
+def process_image(model, device, file_path, motrv2_formatter=None, sequence_name=None, frame_number=1):
     """
     Process a single image with optional MOTRv2 output
-    
+
     Args:
         model: D-FINE model
         device: Torch device
         file_path: Path to image
         motrv2_formatter: Optional MOTRv2Formatter instance
         sequence_name: Optional sequence name for MOTRv2 output
+        frame_number: Frame number for MOTRv2 output (default: 1)
     """
     im_pil = Image.open(file_path).convert("RGB")
     w, h = im_pil.size
@@ -73,23 +75,19 @@ def process_image(model, device, file_path, motrv2_formatter=None, sequence_name
     output = model(im_data, orig_size)
     labels, boxes, scores = output
 
-    # Original visualization
-    draw([im_pil], labels, boxes, scores)
-    
+    # Original visualization (only for single image processing)
+    if frame_number == 1:
+        draw([im_pil], labels, boxes, scores)
+
     # MOTRv2 formatting if requested
     if motrv2_formatter is not None:
         if sequence_name is None:
             sequence_name = os.path.splitext(os.path.basename(file_path))[0]
-        
-        # Process single frame (frame number 1 for single images)
+
+        # Process frame with specified frame number
         motrv2_formatter.process_single_frame(
-            labels[0], boxes[0], scores[0], sequence_name, 1, w, h
+            labels[0], boxes[0], scores[0], sequence_name, frame_number, w, h
         )
-        
-        # Save MOTRv2 JSON
-        output_dir = os.path.dirname(file_path) or "."
-        motrv2_formatter.save_database(output_dir)
-        print(f"MOTRv2 format saved for image: {file_path}")
 
 
 def process_video(model, device, file_path, motrv2_formatter=None, sequence_name=None):
@@ -249,15 +247,55 @@ def main(args):
         print("Error: MOTRv2 formatter not available. Please ensure motrv2_formatter.py is in the correct location.")
         return
 
-    # Check if the input file is an image or a video
-    file_path = args.input
-    if os.path.splitext(file_path)[-1].lower() in [".jpg", ".jpeg", ".png", ".bmp"]:
-        # Process as image
-        process_image(model, device, file_path, motrv2_formatter, args.sequence_name)
-        print("Image processing complete.")
+    # Check if input contains glob patterns or is a single file
+    input_path = args.input
+
+    # Expand glob patterns
+    if '*' in input_path or '?' in input_path:
+        image_files = sorted(glob.glob(input_path))
+        if not image_files:
+            print(f"Error: No files found matching pattern: {input_path}")
+            return
+        print(f"Found {len(image_files)} images matching pattern")
+    else:
+        image_files = [input_path]
+
+    # Determine if we're processing images or video
+    first_file = image_files[0]
+    file_ext = os.path.splitext(first_file)[-1].lower()
+
+    if file_ext in [".jpg", ".jpeg", ".png", ".bmp"]:
+        # Process as image(s)
+        if len(image_files) == 1:
+            # Single image
+            process_image(model, device, image_files[0], motrv2_formatter, args.sequence_name)
+            if motrv2_formatter is not None:
+                output_dir = os.path.dirname(image_files[0]) or "."
+                motrv2_formatter.save_database(output_dir)
+            print("Image processing complete.")
+        else:
+            # Multiple images - process as sequence
+            print(f"Processing {len(image_files)} images as sequence...")
+            for idx, image_file in enumerate(image_files, start=1):
+                process_image(
+                    model, device, image_file, motrv2_formatter,
+                    args.sequence_name, frame_number=idx
+                )
+                if idx % 10 == 0:
+                    print(f"Processed {idx}/{len(image_files)} images...")
+
+            # Save MOTRv2 database after all images are processed
+            if motrv2_formatter is not None:
+                output_dir = os.path.dirname(image_files[0]) or "."
+                json_path = motrv2_formatter.save_database(output_dir)
+                print(f"MOTRv2 detections saved to: {json_path}")
+
+            print(f"Image sequence processing complete. Processed {len(image_files)} images.")
     else:
         # Process as video
-        process_video(model, device, file_path, motrv2_formatter, args.sequence_name)
+        if len(image_files) > 1:
+            print("Warning: Multiple video files detected. Only processing the first one.")
+        process_video(model, device, image_files[0], motrv2_formatter, args.sequence_name)
 
 
 if __name__ == "__main__":

@@ -3,8 +3,8 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
-#SBATCH --time=4:0:0
-#SBATCH --output=dfine_batch_volleyball_%j.out
+#SBATCH --time=12:0:0
+#SBATCH --output=dfine_gt_%j.out
 #SBATCH --job-name=dfine_vb_batch
 
 # Load modules
@@ -24,19 +24,18 @@ echo "Start time: $(date)"
 echo ""
 
 # Go to BeachKI directory
-cd /home/es/es_es/es_lekamt00/BeachKI
+cd /home/es/es_es/es_lekamt00/BeachKI/D-FINE
 
 # Run D-FINE batch processing
-python D-FINE/tools/inference/batch_process_dataset.py \
-    -c D-FINE/configs/dfine/objects365/dfine_hgnetv2_x_obj365.yml \
-    -r D-FINE/dfine_x_obj365.pth \
-    --dataset-path Datasets/Volleyball-Activity-Dataset-3 \
-    --output-dir MOTRv2/data/Dataset/mot \
-    --output-filename det_db_for_finetune_dfine.json \
-    --splits train,valid \
+python tools/inference/torch_inf.py \
+    -c configs/dfine/objects365/dfine_hgnetv2_l_obj365.yml \
+    -r dfine_l_obj365.pth \
+    -i "/home/es/es_es/es_lekamt00/BeachKI/Datasets/Volleyball-Activity-Dataset-3/combined/*.jpg" \
+    -d cuda:0 \
+    --motrv2 \
+    --sequence-name "volleyball/combined/gt" \
     --allowed-classes "0,1,36,156,240" \
-    --score-threshold 0.7 \
-    -d cuda:0
+    --motrv2-score-threshold 0.5
 
 echo ""
 echo "========================================="
