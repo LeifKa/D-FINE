@@ -1,10 +1,21 @@
+# Python compiled files
+__pycache__/
+*.pyc
+*.pyo
+
+# Model weights & outputs
 output/
 weight/
-*.pyc
-wandb/
 *.pth
 *.onnx
+
+# Logs & SLURM output
+wandb/
+logs/
+*.out
+*.log
+
+# Media & large data files
 *.jpg
 *.mp4
 *.json
-
